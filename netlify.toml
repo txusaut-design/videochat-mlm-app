@@ -2,7 +2,7 @@
   remote_images = ["https://source.unsplash.com/.*", "https://images.unsplash.com/.*", "https://ext.same-assets.com/.*", "https://ugc.same-assets.com/.*"]
 
 [build]
-  publish = "out/"
+  publish = "out"
   command = "npm run build"
 
 [build.environment]
@@ -16,9 +16,12 @@
 
 [context.production]
   command = "npm run build"
+  publish = "out"
 
 [context.deploy-preview]
   command = "npm run build"
+  publish = "out"
 
 [context.branch-deploy]
   command = "npm run build"
+  publish = "out"
