@@ -1,0 +1,111 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id               String    @id @default(cuid())
+  email            String    @unique
+  username         String    @unique
+  firstName        String
+  lastName         String
+  password         String
+  avatar           String?
+  sponsorId        String?
+  totalEarnings    Float     @default(0)
+  membershipExpiry DateTime?
+  isActive         Boolean   @default(false)
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
+
+  // Relaciones MLM
+  sponsor   User?  @relation("MLMNetwork", fields: [sponsorId], references: [id])
+  referrals User[] @relation("MLMNetwork")
+
+  // Relaciones
+  createdRooms Room[]            @relation("RoomCreator")
+  roomMembers  RoomMember[]
+  payments     Payment[]
+  sentCommissions     MLMCommission[] @relation("CommissionFrom")
+  receivedCommissions MLMCommission[] @relation("CommissionTo")
+
+  @@map("users")
+}
+
+model Room {
+  id                 String   @id @default(cuid())
+  name               String
+  topic              String
+  description        String
+  maxParticipants    Int      @default(10)
+  requiresMembership Boolean  @default(true)
+  isActive           Boolean  @default(true)
+  creatorId          String
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+
+  // Relaciones
+  creator User @relation("RoomCreator", fields: [creatorId], references: [id])
+  members RoomMember[]
+
+  @@map("rooms")
+}
+
+model RoomMember {
+  id      String @id @default(cuid())
+  roomId  String
+  userId  String
+  joinedAt DateTime @default(now())
+  leftAt   DateTime?
+
+  // Relaciones
+  room Room @relation(fields: [roomId], references: [id], onDelete: Cascade)
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([roomId, userId])
+  @@map("room_members")
+}
+
+model Payment {
+  id                    String        @id @default(cuid())
+  userId                String
+  amount                Float
+  currency              String        // USDT, USDC, BUSD
+  transactionHash       String        @unique
+  status                String        @default("PENDING") // PaymentStatus enum as string
+  membershipExtension   Int           @default(28) // días
+  createdAt             DateTime      @default(now())
+  updatedAt             DateTime      @updatedAt
+
+  // Relaciones
+  user        User            @relation(fields: [userId], references: [id])
+  commissions MLMCommission[]
+
+  @@map("payments")
+}
+
+model MLMCommission {
+  id         String           @id @default(cuid())
+  fromUserId String           // Usuario que pagó
+  toUserId   String           // Usuario que recibe la comisión
+  level      Int              // Nivel en la estructura (1-5)
+  amount     Float            @default(1) // Comisión por nivel
+  paymentId  String
+  status     String           @default("PENDING") // CommissionStatus enum as string
+  createdAt  DateTime         @default(now())
+  updatedAt  DateTime         @updatedAt
+
+  // Relaciones
+  fromUser User    @relation("CommissionFrom", fields: [fromUserId], references: [id])
+  toUser   User    @relation("CommissionTo", fields: [toUserId], references: [id])
+  payment  Payment @relation(fields: [paymentId], references: [id])
+
+  @@map("mlm_commissions")
+}

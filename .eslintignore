@@ -1,0 +1,15 @@
+# Ignore backend files
+backend/
+backend/**/*
+
+# Ignore build outputs
+out/
+.next/
+dist/
+
+# Ignore node_modules
+node_modules/
+
+# Ignore specific files
+*.config.js
+*.config.ts

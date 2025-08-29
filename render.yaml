@@ -1,0 +1,42 @@
+services:
+  # Backend API Service
+  - type: web
+    name: videochat-mlm-backend
+    env: node
+    plan: free
+    buildCommand: cd backend && npm install && npx prisma generate && npm run build
+    startCommand: cd backend && npm run start:prod
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: PORT
+        value: 5000
+      - key: JWT_SECRET
+        generateValue: true
+      - key: JWT_EXPIRES_IN
+        value: 7d
+      - key: RATE_LIMIT_WINDOW_MS
+        value: 900000
+      - key: RATE_LIMIT_MAX_REQUESTS
+        value: 100
+      - key: MLM_LEVEL_1_COMMISSION
+        value: 3.5
+      - key: MLM_LEVEL_2_5_COMMISSION
+        value: 1
+      - key: MLM_MAX_LEVELS
+        value: 5
+      - key: MEMBERSHIP_DURATION_DAYS
+        value: 28
+      - key: MEMBERSHIP_PRICE_USD
+        value: 10
+      - key: DATABASE_URL
+        fromDatabase:
+          name: videochat-mlm-db
+          property: connectionString
+      - key: FRONTEND_URL
+        value: https://videochat-mlm.netlify.app
+
+databases:
+  # PostgreSQL Database
+  - name: videochat-mlm-db
+    plan: free
