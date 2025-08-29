@@ -14,6 +14,8 @@ import userRoutes from './routes/users';
 import roomRoutes from './routes/rooms';
 import paymentRoutes from './routes/payments';
 import mlmRoutes from './routes/mlm';
+import moderationRoutes from './routes/moderation';
+import adminRoutes from './routes/admin';
 
 // Load environment variables
 dotenv.config();
@@ -52,9 +54,17 @@ app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 app.get('/health', (req, res) => {
   res.status(200).json({
     status: 'OK',
-    message: 'VideoChat MLM API is running',
+    message: 'VideoChat MLM API with PostgreSQL is running',
     timestamp: new Date().toISOString(),
-    version: '1.0.0'
+    version: '2.0.0',
+    features: [
+      'User Authentication & Registration',
+      'MLM Referral System (5 levels)',
+      'Democratic Moderation System',
+      'Video Room Management',
+      'Admin Dashboard',
+      'PostgreSQL Database'
+    ]
   });
 });
 
@@ -64,12 +74,24 @@ app.use('/api/users', userRoutes);
 app.use('/api/rooms', roomRoutes);
 app.use('/api/payments', paymentRoutes);
 app.use('/api/mlm', mlmRoutes);
+app.use('/api/moderation', moderationRoutes);
+app.use('/api/admin', adminRoutes);
 
 // 404 handler
 app.use('*', (req, res) => {
   res.status(404).json({
     error: 'Route not found',
-    message: `Cannot ${req.method} ${req.originalUrl}`
+    message: `Cannot ${req.method} ${req.originalUrl}`,
+    availableEndpoints: [
+      'GET /health',
+      'POST /api/auth/register',
+      'POST /api/auth/login',
+      'POST /api/auth/demo-login',
+      'GET /api/admin/dashboard',
+      'POST /api/moderation/voting/start',
+      'GET /api/rooms',
+      'GET /api/users'
+    ]
   });
 });
 
@@ -99,11 +121,12 @@ const startServer = async () => {
     console.log('✅ Database connected successfully');
 
     app.listen(PORT, () => {
-      console.log(`🚀 Server running on port ${PORT}`);
+      console.log(`🚀 VideoChat MLM API Server running on port ${PORT}`);
       console.log(`📊 Environment: ${process.env.NODE_ENV || 'development'}`);
       console.log(`🔗 API URL: http://localhost:${PORT}`);
       console.log(`💾 Database: PostgreSQL`);
       console.log(`🎯 Frontend URL: ${process.env.FRONTEND_URL || 'http://localhost:3000'}`);
+      console.log(`⚖️ Features: Auth, MLM, Moderation, Admin Dashboard`);
     });
   } catch (error) {
     console.error('❌ Failed to start server:', error);

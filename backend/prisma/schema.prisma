@@ -18,10 +18,16 @@ model User {
   lastName         String
   password         String
   avatar           String?
+  referralCode     String    @unique // Código único de referido
+  sponsorCode      String?   // Código del sponsor que lo refirió
   sponsorId        String?
   totalEarnings    Float     @default(0)
+  totalCommissionsPaid Float @default(0)
   membershipExpiry DateTime?
-  isActive         Boolean   @default(false)
+  isActive         Boolean   @default(true)
+  lastActive       DateTime  @default(now())
+  totalSessionTime Int       @default(0) // minutos
+  status           String    @default("active") // active, suspended, banned
   createdAt        DateTime  @default(now())
   updatedAt        DateTime  @updatedAt
 
@@ -36,6 +42,13 @@ model User {
   sentCommissions     MLMCommission[] @relation("CommissionFrom")
   receivedCommissions MLMCommission[] @relation("CommissionTo")
 
+  // Moderación
+  initiatedVotings    Voting[]        @relation("VotingInitiator")
+  targetedVotings     Voting[]        @relation("VotingTarget")
+  votes              Vote[]
+  moderationLogs     ModerationLog[]
+  expulsions         Expulsion[]
+
   @@map("users")
 }
 
@@ -48,12 +61,21 @@ model Room {
   requiresMembership Boolean  @default(true)
   isActive           Boolean  @default(true)
   creatorId          String
+  currentParticipants Int     @default(0)
+  totalParticipations Int     @default(0)
+  totalVotings       Int      @default(0)
+  totalExpulsions    Int      @default(0)
+  averageDuration    Float    @default(0) // minutos
+  lastActivity       DateTime @default(now())
   createdAt          DateTime @default(now())
   updatedAt          DateTime @updatedAt
 
   // Relaciones
   creator User @relation("RoomCreator", fields: [creatorId], references: [id])
   members RoomMember[]
+  votings Voting[]
+  expulsions Expulsion[]
+  moderationLogs ModerationLog[]
 
   @@map("rooms")
 }
@@ -64,6 +86,7 @@ model RoomMember {
   userId  String
   joinedAt DateTime @default(now())
   leftAt   DateTime?
+  sessionDuration Int @default(0) // minutos
 
   // Relaciones
   room Room @relation(fields: [roomId], references: [id], onDelete: Cascade)
@@ -73,13 +96,87 @@ model RoomMember {
   @@map("room_members")
 }
 
+// Sistema de Moderación Democrática
+model Voting {
+  id               String    @id @default(cuid())
+  roomId           String
+  initiatorId      String
+  targetId         String
+  reason           String?
+  requiredVotes    Int       // 50%+1 del total de participantes
+  totalParticipants Int
+  isCompleted      Boolean   @default(false)
+  result           String?   // expelled, failed
+  completedAt      DateTime?
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
+
+  // Relaciones
+  room       Room @relation(fields: [roomId], references: [id], onDelete: Cascade)
+  initiator  User @relation("VotingInitiator", fields: [initiatorId], references: [id])
+  target     User @relation("VotingTarget", fields: [targetId], references: [id])
+  votes      Vote[]
+  expulsion  Expulsion?
+
+  @@map("votings")
+}
+
+model Vote {
+  id        String   @id @default(cuid())
+  votingId  String
+  voterId   String
+  reason    String?
+  createdAt DateTime @default(now())
+
+  // Relaciones
+  voting Voting @relation(fields: [votingId], references: [id], onDelete: Cascade)
+  voter  User   @relation(fields: [voterId], references: [id])
+
+  @@unique([votingId, voterId]) // Un usuario solo puede votar una vez por votación
+  @@map("votes")
+}
+
+model Expulsion {
+  id         String   @id @default(cuid())
+  votingId   String   @unique
+  userId     String
+  roomId     String
+  reason     String?
+  expelledBy String[] // IDs de usuarios que votaron
+  permanent  Boolean  @default(false)
+  createdAt  DateTime @default(now())
+
+  // Relaciones
+  voting Voting @relation(fields: [votingId], references: [id])
+  user   User   @relation(fields: [userId], references: [id])
+
+  @@map("expulsions")
+}
+
+model ModerationLog {
+  id           String   @id @default(cuid())
+  type         String   // voting_started, voting_completed, user_expelled, user_warned
+  roomId       String?
+  initiatorId  String
+  targetId     String?
+  details      String
+  metadata     Json?    // Datos adicionales (votos, etc.)
+  createdAt    DateTime @default(now())
+
+  // Relaciones
+  room       Room? @relation(fields: [roomId], references: [id])
+  initiator  User  @relation(fields: [initiatorId], references: [id])
+
+  @@map("moderation_logs")
+}
+
 model Payment {
   id                    String        @id @default(cuid())
   userId                String
   amount                Float
-  currency              String        // USDT, USDC, BUSD
-  transactionHash       String        @unique
-  status                String        @default("PENDING") // PaymentStatus enum as string
+  currency              String        // USD, USDT, USDC, BUSD
+  transactionHash       String?       @unique
+  status                String        @default("PENDING") // PENDING, COMPLETED, FAILED
   membershipExtension   Int           @default(28) // días
   createdAt             DateTime      @default(now())
   updatedAt             DateTime      @updatedAt
@@ -96,16 +193,17 @@ model MLMCommission {
   fromUserId String           // Usuario que pagó
   toUserId   String           // Usuario que recibe la comisión
   level      Int              // Nivel en la estructura (1-5)
-  amount     Float            @default(1) // Comisión por nivel
-  paymentId  String
-  status     String           @default("PENDING") // CommissionStatus enum as string
+  amount     Float            // Comisión por nivel ($3.5 nivel 1, $1 niveles 2-5)
+  paymentId  String?
+  status     String           @default("PENDING") // PENDING, PAID, FAILED
+  description String?
   createdAt  DateTime         @default(now())
   updatedAt  DateTime         @updatedAt
 
   // Relaciones
-  fromUser User    @relation("CommissionFrom", fields: [fromUserId], references: [id])
-  toUser   User    @relation("CommissionTo", fields: [toUserId], references: [id])
-  payment  Payment @relation(fields: [paymentId], references: [id])
+  fromUser User     @relation("CommissionFrom", fields: [fromUserId], references: [id])
+  toUser   User     @relation("CommissionTo", fields: [toUserId], references: [id])
+  payment  Payment? @relation(fields: [paymentId], references: [id])
 
   @@map("mlm_commissions")
 }

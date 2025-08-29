@@ -17,6 +17,13 @@ const generateToken = (userId: string): string => {
   );
 };
 
+// Generate unique referral code
+const generateReferralCode = (firstName: string, lastName: string): string => {
+  const randomNum = Math.floor(Math.random() * 10000).toString().padStart(4, '0');
+  const prefix = (firstName.substring(0, 2) + lastName.substring(0, 2)).toUpperCase();
+  return `${prefix}${randomNum}`;
+};
+
 // @route   POST /api/auth/register
 // @desc    Register a new user
 // @access  Public
@@ -47,17 +54,32 @@ router.post('/register', validate(registerSchema), asyncHandler(async (req: any,
   if (sponsorCode) {
     const sponsor = await prisma.user.findFirst({
       where: {
-        OR: [
-          { username: sponsorCode },
-          { id: sponsorCode }
-        ]
+        referralCode: sponsorCode
       }
     });
 
     if (!sponsor) {
-      throw createError('Invalid sponsor code', 400);
+      throw createError('Invalid sponsor referral code', 400);
     }
     sponsorId = sponsor.id;
+  }
+
+  // Generate unique referral code
+  let referralCode: string;
+  let isUnique = false;
+  let attempts = 0;
+
+  do {
+    referralCode = generateReferralCode(firstName, lastName);
+    const existing = await prisma.user.findUnique({
+      where: { referralCode }
+    });
+    isUnique = !existing;
+    attempts++;
+  } while (!isUnique && attempts < 10);
+
+  if (!isUnique) {
+    throw createError('Unable to generate unique referral code. Please try again.', 500);
   }
 
   // Hash password
@@ -71,6 +93,8 @@ router.post('/register', validate(registerSchema), asyncHandler(async (req: any,
       firstName,
       lastName,
       password: hashedPassword,
+      referralCode,
+      sponsorCode,
       sponsorId,
     },
     select: {
@@ -79,11 +103,21 @@ router.post('/register', validate(registerSchema), asyncHandler(async (req: any,
       username: true,
       firstName: true,
       lastName: true,
+      referralCode: true,
+      sponsorCode: true,
       sponsorId: true,
       totalEarnings: true,
       membershipExpiry: true,
       isActive: true,
+      status: true,
       createdAt: true,
+      sponsor: {
+        select: {
+          firstName: true,
+          lastName: true,
+          referralCode: true
+        }
+      }
     }
   });
 
@@ -108,11 +142,30 @@ router.post('/login', validate(loginSchema), asyncHandler(async (req: any, res: 
 
   // Find user with password
   const user = await prisma.user.findUnique({
-    where: { email }
+    where: { email },
+    include: {
+      sponsor: {
+        select: {
+          firstName: true,
+          lastName: true,
+          referralCode: true
+        }
+      },
+      _count: {
+        select: {
+          referrals: true
+        }
+      }
+    }
   });
 
   if (!user) {
     throw createError('Invalid credentials', 401);
+  }
+
+  // Check if user is not banned
+  if (user.status === 'banned') {
+    throw createError('Account has been banned', 403);
   }
 
   // Check password
@@ -120,6 +173,12 @@ router.post('/login', validate(loginSchema), asyncHandler(async (req: any, res: 
   if (!isValidPassword) {
     throw createError('Invalid credentials', 401);
   }
+
+  // Update last active
+  await prisma.user.update({
+    where: { id: user.id },
+    data: { lastActive: new Date() }
+  });
 
   // Generate token
   const token = generateToken(user.id);
@@ -150,10 +209,16 @@ router.get('/me', authenticate, asyncHandler(async (req: AuthRequest, res: any) 
       firstName: true,
       lastName: true,
       avatar: true,
+      referralCode: true,
+      sponsorCode: true,
       sponsorId: true,
       totalEarnings: true,
+      totalCommissionsPaid: true,
       membershipExpiry: true,
       isActive: true,
+      status: true,
+      lastActive: true,
+      totalSessionTime: true,
       createdAt: true,
       updatedAt: true,
       sponsor: {
@@ -161,7 +226,8 @@ router.get('/me', authenticate, asyncHandler(async (req: AuthRequest, res: any) 
           id: true,
           username: true,
           firstName: true,
-          lastName: true
+          lastName: true,
+          referralCode: true
         }
       },
       _count: {
@@ -169,28 +235,20 @@ router.get('/me', authenticate, asyncHandler(async (req: AuthRequest, res: any) 
           referrals: true,
           createdRooms: true,
           payments: true,
-          receivedCommissions: true
+          receivedCommissions: true,
+          sentCommissions: true
         }
       }
     }
   });
 
+  if (!user) {
+    throw createError('User not found', 404);
+  }
+
   res.json({
     success: true,
     data: { user }
-  });
-}));
-
-// @route   POST /api/auth/refresh
-// @desc    Refresh JWT token
-// @access  Private
-router.post('/refresh', authenticate, asyncHandler(async (req: AuthRequest, res: any) => {
-  const token = generateToken(req.user!.id);
-
-  res.json({
-    success: true,
-    message: 'Token refreshed successfully',
-    data: { token }
   });
 }));
 
@@ -214,6 +272,7 @@ router.post('/demo-login', asyncHandler(async (req: any, res: any) => {
         firstName: 'Demo',
         lastName: 'User',
         password: hashedPassword,
+        referralCode: 'DEMO0000',
         membershipExpiry: new Date(Date.now() + 28 * 24 * 60 * 60 * 1000), // 28 days
         isActive: true,
         totalEarnings: 0,
@@ -221,18 +280,82 @@ router.post('/demo-login', asyncHandler(async (req: any, res: any) => {
     });
   }
 
+  // Update last active
+  await prisma.user.update({
+    where: { id: demoUser.id },
+    data: { lastActive: new Date() }
+  });
+
   // Generate token
   const token = generateToken(demoUser.id);
 
-  // Return user without password
-  const { password: _, ...userWithoutPassword } = demoUser;
+  // Return user without password and with additional info
+  const userWithInfo = await prisma.user.findUnique({
+    where: { id: demoUser.id },
+    select: {
+      id: true,
+      email: true,
+      username: true,
+      firstName: true,
+      lastName: true,
+      referralCode: true,
+      sponsorCode: true,
+      totalEarnings: true,
+      membershipExpiry: true,
+      isActive: true,
+      status: true,
+      createdAt: true,
+      _count: {
+        select: {
+          referrals: true
+        }
+      }
+    }
+  });
 
   res.json({
     success: true,
     message: 'Demo login successful',
     data: {
-      user: userWithoutPassword,
+      user: userWithInfo,
       token
+    }
+  });
+}));
+
+// @route   POST /api/auth/validate-sponsor
+// @desc    Validate sponsor referral code
+// @access  Public
+router.post('/validate-sponsor', asyncHandler(async (req: any, res: any) => {
+  const { sponsorCode } = req.body;
+
+  if (!sponsorCode) {
+    return res.json({
+      success: true,
+      data: { valid: false }
+    });
+  }
+
+  const sponsor = await prisma.user.findUnique({
+    where: { referralCode: sponsorCode },
+    select: {
+      id: true,
+      firstName: true,
+      lastName: true,
+      referralCode: true,
+      _count: {
+        select: {
+          referrals: true
+        }
+      }
+    }
+  });
+
+  res.json({
+    success: true,
+    data: {
+      valid: !!sponsor,
+      sponsor: sponsor || null
     }
   });
 }));
